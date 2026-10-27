@@ -973,7 +973,7 @@ static int iter_load_paths(
 	git_str_clear(&ctx->ref_name);
 	git_str_put(&ctx->ref_name, ctx->ref_prefix, ctx->ref_prefix_len);
 
-	while (git_iterator_advance(&entry, fsit) == 0) {
+	while ((error = git_iterator_advance(&entry, fsit)) == 0) {
 		char *ref_dup;
 
 		git_str_truncate(&ctx->ref_name, ctx->ref_prefix_len);
@@ -1000,6 +1000,8 @@ static int iter_load_paths(
 		if ((error = git_vector_insert(&ctx->iter->loose, ref_dup)) < 0)
 			goto done;
 	}
+	if (error == GIT_ITEROVER)
+		error = 0;
 
 done:
 	git_iterator_free(fsit);
@@ -1049,18 +1051,22 @@ static int refdb_fs_backend__iterator_next(
 	struct packref *ref;
 
 	while (iter->loose_pos < iter->loose.length) {
-		const char *path = git_vector_get(&iter->loose, iter->loose_pos++);
+                const char *path = git_vector_get(&iter->loose, iter->loose_pos++);
+                int lookup_error;
 
-		if (loose_lookup(out, backend, path) == 0) {
-			ref = git_sortedcache_lookup(iter->cache, path);
-			if (ref)
-				ref->flags |= PACKREF_SHADOWED;
+                if ((lookup_error = loose_lookup(out, backend, path)) == 0) {
+                        ref = git_sortedcache_lookup(iter->cache, path);
+                        if (ref)
+                                ref->flags |= PACKREF_SHADOWED;
 
-			return 0;
-		}
+                        return 0;
+                }
 
-		git_error_clear();
-	}
+                if (lookup_error != GIT_ENOTFOUND)
+                        return lookup_error;
+
+                git_error_clear();
+        }
 
 	error = GIT_ITEROVER;
 	while (iter->packed_pos < git_sortedcache_entrycount(iter->cache)) {
@@ -1090,20 +1096,23 @@ static int refdb_fs_backend__iterator_next_name(
 	struct packref *ref;
 
 	while (iter->loose_pos < iter->loose.length) {
-		const char *path = git_vector_get(&iter->loose, iter->loose_pos++);
-		struct packref *ref;
+                const char *path = git_vector_get(&iter->loose, iter->loose_pos++);
+                int lookup_error;
 
-		if (loose_lookup(NULL, backend, path) == 0) {
-			ref = git_sortedcache_lookup(iter->cache, path);
-			if (ref)
-				ref->flags |= PACKREF_SHADOWED;
+                if ((lookup_error = loose_lookup(NULL, backend, path)) == 0) {
+                        ref = git_sortedcache_lookup(iter->cache, path);
+                        if (ref)
+                                ref->flags |= PACKREF_SHADOWED;
 
-			*out = path;
-			return 0;
-		}
+                        *out = path;
+                        return 0;
+                }
 
-		git_error_clear();
-	}
+                if (lookup_error != GIT_ENOTFOUND)
+                        return lookup_error;
+
+                git_error_clear();
+        }
 
 	error = GIT_ITEROVER;
 	while (iter->packed_pos < git_sortedcache_entrycount(iter->cache)) {
